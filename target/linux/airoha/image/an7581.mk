@@ -25,3 +25,11 @@ define Device/airoha_an7581-evb-emmc
   DEVICE_PACKAGES := kmod-i2c-an7581
 endef
 TARGET_DEVICES += airoha_an7581-evb-emmc
+
+define Device/airoha_an7581-gemtek-w1700k
+  DEVICE_VENDOR := Gemtek
+  DEVICE_MODEL := W1700K
+  DEVICE_DTS := an7581-gemtek-w1700k
+  DEVICE_DTS_DIR := ../dts
+endef
+TARGET_DEVICES += airoha_an7581-gemtek-w1700k
