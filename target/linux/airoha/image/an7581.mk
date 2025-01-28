@@ -25,3 +25,23 @@ define Device/airoha_an7581-evb-emmc
   DEVICE_PACKAGES := kmod-i2c-an7581
 endef
 TARGET_DEVICES += airoha_an7581-evb-emmc
+
+define Device/airoha_an7581-gemtek-w1700k
+  $(call Device/FitImageLzma)
+  DEVICE_VENDOR := Gemtek
+  DEVICE_MODEL := W1700K
+  DEVICE_ALT0_VENDOR := CenturyLink
+  DEVICE_ALT0_MODEL := W1700K
+  DEVICE_ALT1_VENDOR := Lumen
+  DEVICE_ALT1_MODEL := W1700K
+  DEVICE_ALT2_VENDOR := Quantum Fiber
+  DEVICE_ALT2_MODEL := W1700K
+  DEVICE_PACKAGES := kmod-leds-pwm kmod-i2c-an7581 kmod-pwm-airoha \
+		     kmod-mt7996-firmware
+  DEVICE_DTS := an7581-gemtek-w1700k
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTS_CONFIG := config@1
+  KERNEL_LOADADDR := 0x80088000
+  IMAGE/sysupgrade.bin := append-kernel | pad-to 128k | append-rootfs | pad-rootfs | append-metadata
+endef
+TARGET_DEVICES += airoha_an7581-gemtek-w1700k
