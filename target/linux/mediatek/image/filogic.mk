@@ -717,6 +717,15 @@ endif
 endef
 TARGET_DEVICES += bananapi_bpi-r4-lite
 
+define Device/bananapi_bpi-r4-pro-8x
+  DEVICE_MODEL := BPi-R4-Pro-8X
+  DEVICE_DTS := mt7988a-bananapi-bpi-r4-pro-8x
+  DEVICE_DTS_CONFIG := config-mt7988a-bananapi-bpi-r4-pro-8x
+  $(call Device/bananapi_bpi-r4-common)
+  DEVICE_PACKAGES += kmod-phy-aeonsemi-as21xxx
+endef
+TARGET_DEVICES += bananapi_bpi-r4-pro-8x
+
 define Device/buffalo_wsr-6000ax8
   DEVICE_MODEL := WSR-6000AX8
   DEVICE_VENDOR := Buffalo
