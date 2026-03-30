@@ -1,0 +1,23 @@
+From: Pietro Ameruoso <p.ameruoso@live.it>
+Date: Wed, 2 Apr 2026 00:00:00 +0000
+Subject: [PATCH] boot: uboot-mediatek: Fix BPI-R4-Pro blue LED label typo
+
+Fix typo in blue LED label from "blue:staus" to "blue:status" in the BPI-R4-Pro
+8x device tree configuration.
+
+Signed-off-by: Pietro Ameruoso <p.ameruoso@live.it>
+---
+ arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro-8x.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro-8x.dts
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro-8x.dts
+@@ -769,7 +769,7 @@
+ 		};
+ 
+ 		led_blue: sys-led-blue {
+-			label = "blue:staus";
++			label = "blue:status";
+ 			gpios = <&pca9555 14 GPIO_ACTIVE_HIGH>;
+ 		};
+ 	};

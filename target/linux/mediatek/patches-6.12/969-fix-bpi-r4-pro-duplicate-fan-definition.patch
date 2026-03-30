@@ -1,0 +1,38 @@
+From: Pietro Ameruoso (p.ameruoso@live.it)
+Date: Wed, 2 Apr 2026 00:00:00 +0000
+Subject: [PATCH] arm64: dts: mediatek: mt7988: Fix BPI-R4-Pro duplicate fan definition
+
+Remove duplicate &fan block and consolidate fan configuration into single
+definition with status property.
+
+Signed-off-by: Pietro Ameruoso <p.ameruoso@live.it>
+---
+ arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi | 11 +++--------
+ 1 file changed, 3 insertions(+), 11 deletions(-)
+
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-bananapi-bpi-r4-pro.dtsi
+@@ -33,6 +33,7 @@
+ 		pinctrl-names = "default";
+ 		pwms = <&pwm 0 50000>;
+ 		#cooling-cells = <2>;
++		status = "okay";
+ 	};
+ 
+ 	gpio-keys {
+@@ -253,16 +254,8 @@
+ 	status = "okay";
+ };
+ 
+-&fan {
+-	pinctrl-0 = <&pwm0_pins>;
+-	pinctrl-names = "default";
+-	pwms = <&pwm 0 50000>;
+-	status = "okay";
+-};
+-
+ &gmac0 {
+ 	status = "okay";
+ };
+ 
+ &gsw_phy0 {
