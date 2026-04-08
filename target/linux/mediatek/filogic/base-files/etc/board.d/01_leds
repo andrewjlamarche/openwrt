@@ -278,6 +278,10 @@ smartrg,sdg-8733a)
 	ucidef_set_led_netdev "wan-orange" "WAN" "mdio-bus:08:orange:wan" "wan" "link_100 link_1000"
 	ucidef_set_led_netdev "wan-white" "WAN" "mdio-bus:08:white:wan" "wan" "link_10000"
 	;;
+smartrg,sdg-9000)
+	ucidef_set_led_netdev "mgmt-green" "MGMT" "mt7530-0:03:green:mgmt" "mgmt" "link_1000"
+	ucidef_set_led_netdev "mgmt-amber" "MGMT" "mt7530-0:03:amber:mgmt" "mgmt" "link_100 link_10"
+	;;
 teltonika,rutc50)
 	ucidef_set_led_netdev "wan-green" "WAN" "mdio-bus:00:green:wan" "wan" "link_1000 tx rx"
 	ucidef_set_led_netdev "wan-amber" "WAN" "mdio-bus:00:amber:wan" "wan" "link_100 link_10 tx rx"
