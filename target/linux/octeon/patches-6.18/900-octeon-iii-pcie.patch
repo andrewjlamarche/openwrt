@@ -1,0 +1,244 @@
+--- a/arch/mips/pci/pcie-octeon.c
++++ b/arch/mips/pci/pcie-octeon.c
+@@ -20,6 +20,8 @@
+ #include <asm/octeon/cvmx-pexp-defs.h>
+ #include <asm/octeon/cvmx-pemx-defs.h>
+ #include <asm/octeon/cvmx-dpi-defs.h>
++#include <asm/octeon/cvmx-mio-defs.h>
++#include <asm/octeon/cvmx-rst-defs.h>
+ #include <asm/octeon/cvmx-sli-defs.h>
+ #include <asm/octeon/cvmx-sriox-defs.h>
+ #include <asm/octeon/cvmx-helper-errata.h>
+@@ -30,6 +32,12 @@
+ #define MRRS_CN6XXX 3 /* 1024 byte Max Read Request Size */
+ #define MPS_CN6XXX  0 /* 128 byte Max Packet Size (Limit of most PCs) */
+ 
++/* CN70xx GSER DLM CSRs used by PCIe errata 20669. */
++#define CVMX_GSERX_DLMX_MPLL_MULTIPLIER(qlm) \
++	(CVMX_ADD_IO_SEG(0x0001180090001030ull) + ((qlm) & 3) * 524288)
++#define CVMX_GSERX_DLMX_REF_CLKDIV2(qlm) \
++	(CVMX_ADD_IO_SEG(0x0001180090001040ull) + ((qlm) & 3) * 524288)
++
+ /* Module parameter to disable PCI probing */
+ static int pcie_disable;
+ module_param(pcie_disable, int, S_IRUGO);
+@@ -37,6 +45,75 @@ module_param(pcie_disable, int, S_IRUGO)
+ static int enable_pcie_14459_war;
+ static int enable_pcie_bus_num_war[2];
+ 
++static int cvmx_pcie_cn70xx_measure_refclock(int qlm)
++{
++	union cvmx_mio_ptp_clock_cfg ptp_clock;
++	u64 count, start_cycle, stop_cycle;
++	int incr_count = 1;
++
++	if (qlm == 0 && (cvmx_read_csr(CVMX_GSERX_DLMX_REF_CLKDIV2(qlm)) & 1))
++		incr_count = 2;
++
++	ptp_clock.u64 = cvmx_read_csr(CVMX_MIO_PTP_CLOCK_CFG);
++	ptp_clock.s.evcnt_en = 0;
++	cvmx_write_csr(CVMX_MIO_PTP_CLOCK_CFG, ptp_clock.u64);
++	ptp_clock.u64 = cvmx_read_csr(CVMX_MIO_PTP_CLOCK_CFG);
++	ptp_clock.s.evcnt_edge = 0;
++	ptp_clock.s.evcnt_in = 0x10 + qlm;
++	cvmx_write_csr(CVMX_MIO_PTP_CLOCK_CFG, ptp_clock.u64);
++
++	/* The event counter counts down from its programmed value. */
++	cvmx_read_csr(CVMX_MIO_PTP_EVT_CNT);
++	count = cvmx_read_csr(CVMX_MIO_PTP_EVT_CNT);
++	cvmx_write_csr(CVMX_MIO_PTP_EVT_CNT, -count);
++	cvmx_write_csr(CVMX_MIO_PTP_EVT_CNT, 1000000000);
++	ptp_clock.u64 = cvmx_read_csr(CVMX_MIO_PTP_CLOCK_CFG);
++	ptp_clock.s.evcnt_en = 1;
++	cvmx_write_csr(CVMX_MIO_PTP_CLOCK_CFG, ptp_clock.u64);
++	start_cycle = cvmx_get_cycle();
++	mdelay(50);
++	cvmx_read_csr(CVMX_MIO_PTP_EVT_CNT);
++	count = cvmx_read_csr(CVMX_MIO_PTP_EVT_CNT);
++	stop_cycle = cvmx_get_cycle();
++	ptp_clock.u64 = cvmx_read_csr(CVMX_MIO_PTP_CLOCK_CFG);
++	ptp_clock.s.evcnt_en = 0;
++	cvmx_write_csr(CVMX_MIO_PTP_CLOCK_CFG, ptp_clock.u64);
++
++	count = (1000000000 - count) * incr_count;
++	if (stop_cycle == start_cycle)
++		return 0;
++	return (u64)count * octeon_get_clock_rate() /
++		(stop_cycle - start_cycle);
++}
++
++static int cvmx_pcie_cn70xx_fix_mpll(int qlm)
++{
++	u64 refclock;
++	int old_multiplier;
++	int multiplier;
++
++	refclock = cvmx_pcie_cn70xx_measure_refclock(qlm);
++	if (refclock > 99000000 && refclock < 101000000)
++		old_multiplier = 35;
++	else if (refclock > 124000000 && refclock < 126000000)
++		old_multiplier = 56;
++	else if (refclock > 156000000 && refclock < 156500000)
++		old_multiplier = 45;
++	else
++		return -EINVAL;
++
++	/* Errata 20669: lower the multiplier one step at a time. */
++	multiplier = ((u64)2500000000 + refclock / 2) / refclock;
++	while (old_multiplier > multiplier) {
++		old_multiplier--;
++		cvmx_write_csr(CVMX_GSERX_DLMX_MPLL_MULTIPLIER(qlm),
++			old_multiplier);
++		mdelay(1);
++	}
++
++	return 0;
++}
++
+ union cvmx_pcie_address {
+ 	uint64_t u64;
+ 	struct {
+@@ -1155,6 +1232,8 @@ static int __cvmx_pcie_rc_initialize_gen
+ 	int i;
+ 	union cvmx_ciu_soft_prst ciu_soft_prst;
+ 	union cvmx_mio_rst_ctlx mio_rst_ctl;
++	union cvmx_rst_ctlx rst_ctl;
++	union cvmx_rst_soft_prstx rst_soft_prst;
+ 	union cvmx_pemx_bar_ctl pemx_bar_ctl;
+ 	union cvmx_pemx_ctl_status pemx_ctl_status;
+ 	union cvmx_pemx_bist_status pemx_bist_status;
+@@ -1234,10 +1313,18 @@ static int __cvmx_pcie_rc_initialize_gen
+ #endif
+ 
+ 	/* Make sure we aren't trying to setup a target mode interface in host mode */
+-	mio_rst_ctl.u64 = cvmx_read_csr(CVMX_MIO_RST_CTLX(pcie_port));
+-	if (!mio_rst_ctl.s.host_mode) {
+-		pr_notice("PCIe: Port %d in endpoint mode.\n", pcie_port);
+-		return -1;
++	if (OCTEON_IS_MODEL(OCTEON_CN70XX)) {
++		rst_ctl.u64 = cvmx_read_csr(CVMX_RST_CTLX(pcie_port));
++		if (!rst_ctl.s.host_mode) {
++			pr_notice("PCIe: Port %d in endpoint mode.\n", pcie_port);
++			return -1;
++		}
++	} else {
++		mio_rst_ctl.u64 = cvmx_read_csr(CVMX_MIO_RST_CTLX(pcie_port));
++		if (!mio_rst_ctl.s.host_mode) {
++			pr_notice("PCIe: Port %d in endpoint mode.\n", pcie_port);
++			return -1;
++		}
+ 	}
+ 
+ 	/* CN63XX Pass 1.0 errata G-14395 requires the QLM De-emphasis be programmed */
+@@ -1258,47 +1345,61 @@ static int __cvmx_pcie_rc_initialize_gen
+ 			cvmx_write_csr(CVMX_CIU_QLM0, ciu_qlm.u64);
+ 		}
+ 	}
+-	/* Bring the PCIe out of reset */
+-	if (pcie_port)
+-		ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST1);
+-	else
+-		ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST);
+-	/*
+-	 * After a chip reset the PCIe will also be in reset. If it
+-	 * isn't, most likely someone is trying to init it again
+-	 * without a proper PCIe reset
+-	 */
+-	if (ciu_soft_prst.s.soft_prst == 0) {
+-		/* Reset the port */
+-		ciu_soft_prst.s.soft_prst = 1;
++	udelay(1000);
++
++	if (OCTEON_IS_MODEL(OCTEON_CN70XX)) {
++		rst_soft_prst.u64 = cvmx_read_csr(CVMX_RST_SOFT_PRSTX(pcie_port));
++		if (!rst_soft_prst.s.soft_prst) {
++			rst_soft_prst.s.soft_prst = 1;
++			cvmx_write_csr(CVMX_RST_SOFT_PRSTX(pcie_port),
++				rst_soft_prst.u64);
++			udelay(2000);
++		}
++		rst_soft_prst.u64 = cvmx_read_csr(CVMX_RST_SOFT_PRSTX(pcie_port));
++		rst_soft_prst.s.soft_prst = 0;
++		cvmx_write_csr(CVMX_RST_SOFT_PRSTX(pcie_port), rst_soft_prst.u64);
++		udelay(1000);
++
++		if (CVMX_WAIT_FOR_FIELD64(CVMX_RST_CTLX(pcie_port),
++			union cvmx_rst_ctlx, rst_done, ==, 1, 10000)) {
++			pr_notice("PCIe: Port %d stuck in reset, skipping.\n", pcie_port);
++			return -1;
++		}
++
++		/* CN70xx PCIe0/1/2 use DLM1/1/2 respectively. */
++		if (cvmx_pcie_cn70xx_fix_mpll(pcie_port + 1)) {
++			pr_notice("PCIe: invalid reference clock on port %d\n", pcie_port);
++			return -1;
++		}
++	} else {
++		/* Bring the PCIe out of reset. */
+ 		if (pcie_port)
+-			cvmx_write_csr(CVMX_CIU_SOFT_PRST1, ciu_soft_prst.u64);
++			ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST1);
+ 		else
++			ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST);
++		if (ciu_soft_prst.s.soft_prst == 0) {
++			ciu_soft_prst.s.soft_prst = 1;
++			if (pcie_port)
++				cvmx_write_csr(CVMX_CIU_SOFT_PRST1, ciu_soft_prst.u64);
++			else
++				cvmx_write_csr(CVMX_CIU_SOFT_PRST, ciu_soft_prst.u64);
++			udelay(2000);
++		}
++		if (pcie_port) {
++			ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST1);
++			ciu_soft_prst.s.soft_prst = 0;
++			cvmx_write_csr(CVMX_CIU_SOFT_PRST1, ciu_soft_prst.u64);
++		} else {
++			ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST);
++			ciu_soft_prst.s.soft_prst = 0;
+ 			cvmx_write_csr(CVMX_CIU_SOFT_PRST, ciu_soft_prst.u64);
+-		/* Wait until pcie resets the ports. */
+-		udelay(2000);
+-	}
+-	if (pcie_port) {
+-		ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST1);
+-		ciu_soft_prst.s.soft_prst = 0;
+-		cvmx_write_csr(CVMX_CIU_SOFT_PRST1, ciu_soft_prst.u64);
+-	} else {
+-		ciu_soft_prst.u64 = cvmx_read_csr(CVMX_CIU_SOFT_PRST);
+-		ciu_soft_prst.s.soft_prst = 0;
+-		cvmx_write_csr(CVMX_CIU_SOFT_PRST, ciu_soft_prst.u64);
+-	}
+-
+-	/* Wait for PCIe reset to complete */
+-	udelay(1000);
+-
+-	/*
+-	 * Check and make sure PCIe came out of reset. If it doesn't
+-	 * the board probably hasn't wired the clocks up and the
+-	 * interface should be skipped.
+-	 */
+-	if (CVMX_WAIT_FOR_FIELD64(CVMX_MIO_RST_CTLX(pcie_port), union cvmx_mio_rst_ctlx, rst_done, ==, 1, 10000)) {
+-		pr_notice("PCIe: Port %d stuck in reset, skipping.\n", pcie_port);
+-		return -1;
++		}
++		udelay(1000);
++		if (CVMX_WAIT_FOR_FIELD64(CVMX_MIO_RST_CTLX(pcie_port),
++			union cvmx_mio_rst_ctlx, rst_done, ==, 1, 10000)) {
++			pr_notice("PCIe: Port %d stuck in reset, skipping.\n", pcie_port);
++			return -1;
++		}
+ 	}
+ 
+ 	/* Check BIST status */
+@@ -1912,6 +2013,11 @@ static int __init octeon_pcie_setup(void
+ 		npei_ctl_status.u64 = cvmx_read_csr(CVMX_PEXP_NPEI_CTL_STATUS);
+ 		host_mode = npei_ctl_status.s.host_mode;
+ 		octeon_dma_bar_type = OCTEON_DMA_BAR_TYPE_PCIE;
++	} else if (OCTEON_IS_MODEL(OCTEON_CN70XX)) {
++		union cvmx_rst_ctlx rst_ctl;
++		rst_ctl.u64 = cvmx_read_csr(CVMX_RST_CTLX(0));
++		host_mode = rst_ctl.s.host_mode;
++		octeon_dma_bar_type = OCTEON_DMA_BAR_TYPE_PCIE2;
+ 	} else {
+ 		union cvmx_mio_rst_ctlx mio_rst_ctl;
+ 		mio_rst_ctl.u64 = cvmx_read_csr(CVMX_MIO_RST_CTLX(0));
